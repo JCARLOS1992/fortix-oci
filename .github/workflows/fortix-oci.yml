@@ -1,0 +1,65 @@
+# Guardar en el repositorio como:  .github/workflows/fortix-oci.yml
+# Junto a fortix-oci-launch.sh en la raíz del repositorio.
+#
+# Cada hora GitHub ejecuta el script durante ~50 min, reintentando cada ~60 s
+# crear la instancia ARM "fortix" en Oracle Cloud (Bogotá). Cuando la crea,
+# la IP aparece en el resumen de la ejecución (pestaña Actions).
+#
+# Secretos necesarios (Settings → Secrets and variables → Actions):
+#   OCI_USER_OCID      ocid1.user.oc1..
+#   OCI_TENANCY_OCID   ocid1.tenancy.oc1..
+#   OCI_FINGERPRINT    aa:bb:cc:...
+#   OCI_PRIVATE_KEY    contenido completo del archivo .pem de la llave de API
+
+name: Crear instancia Fortix en Oracle
+
+on:
+  schedule:
+    - cron: "7 * * * *"      # cada hora (GitHub puede retrasarlo unos minutos)
+  workflow_dispatch:          # botón "Run workflow" para lanzarlo a mano
+
+concurrency:
+  group: fortix-oci
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar OCI CLI
+        run: |
+          pipx install oci-cli
+          oci --version
+
+      - name: Configurar credenciales de Oracle
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
+          chmod 600 ~/.oci/key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=sa-bogota-1
+          key_file=$HOME/.oci/key.pem
+          EOF
+          chmod 600 ~/.oci/config
+
+      - name: Reintentar crear la instancia (hasta ~50 min)
+        env:
+          COMPARTMENT_ID: ${{ secrets.OCI_TENANCY_OCID }}
+          MAX_MINUTES: "50"
+          OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+        run: bash fortix-oci-launch.sh
